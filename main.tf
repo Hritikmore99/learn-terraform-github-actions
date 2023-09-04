@@ -16,59 +16,88 @@ terraform {
 }
 
 provider "aws" {
-  region = "us-west-2"
+  region = "us-east-1"
 }
 
-resource "random_pet" "sg" {}
+resource "aws_emr_cluster" "cluster" {
+  name          = "emr-test-arn"
+  release_label = "emr-6.12.0"
+  applications  = ["Spark"] #change -->EMR subnetID 
 
-data "aws_ami" "ubuntu" {
-  most_recent = true
-
-  filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-
-  owners = ["099720109477"] # Canonical
-}
-
-resource "aws_instance" "web" {
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = "t2.micro"
-  vpc_security_group_ids = [aws_security_group.web-sg.id]
-
-  user_data = <<-EOF
-              #!/bin/bash
-              apt-get update
-              apt-get install -y apache2
-              sed -i -e 's/80/8080/' /etc/apache2/ports.conf
-              echo "Hello World" > /var/www/html/index.html
-              systemctl restart apache2
-              EOF
-}
-
-resource "aws_security_group" "web-sg" {
-  name = "${random_pet.sg.id}-sg"
-  ingress {
-    from_port   = 8080
-    to_port     = 8080
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  // connectivity to ubuntu mirrors is required to run `apt-get update` and `apt-get install apache2`
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+  additional_info = <<EOF
+{
+  "instanceAwsClientConfiguration": {
+    "proxyPort": 8099,
+    "proxyHost": "myproxy.example.com"
   }
 }
+EOF
 
-output "web-address" {
-  value = "${aws_instance.web.public_dns}:8080"
+  termination_protection            = false
+  keep_job_flow_alive_when_no_steps = true
+
+  ec2_attributes {
+    subnet_id                         = "subnet-03d0afe4b2fd49e84"  #change -->EMR subnetID 
+    emr_managed_master_security_group = "sg-0fca9573e6faf69b4"  	#change -->EMR primary node SG ID
+    emr_managed_slave_security_group  = "sg-04c5455cf7f81e274"  	#change -->EMR core node SG ID
+    instance_profile                  = "arn:aws:iam::486541654673:instance-profile/EMR_EC2_DefaultRole" 
+	#change -->go to IAM role check EMR_EC2_DefaultRole instance_profile ARN
+  }
+ 
+  master_instance_group {
+    instance_type = "m4.large" #change here
+  }
+
+  core_instance_group {
+    instance_type  = "m5.xlarge" #change here
+    instance_count = 1
+
+    ebs_config {
+      size                 = "40" #change here
+      type                 = "gp2"
+      volumes_per_instance = 1
+    }
+
+    bid_price = "0.30"
+  }
+
+  ebs_root_volume_size = 15 #change here
+
+  tags = {
+    role = "rolename"
+    env  = "env"
+  }
+
+
+  configurations_json = <<EOF
+  [
+    {
+      "Classification": "hadoop-env",
+      "Configurations": [
+        {
+          "Classification": "export",
+          "Properties": {
+            "JAVA_HOME": "/usr/lib/jvm/java-1.8.0"
+          }
+        }
+      ],
+      "Properties": {}
+    },
+    {
+      "Classification": "spark-env",
+      "Configurations": [
+        {
+          "Classification": "export",
+          "Properties": {
+            "JAVA_HOME": "/usr/lib/jvm/java-1.8.0"
+          }
+        }
+      ],
+      "Properties": {}
+    }
+  ]
+EOF
+
+  service_role = "arn:aws:iam::486541654673:role/EMR_DefaultRole" 
+  #change -->go to IAM role check EMR_DefaultRole ARN
 }
